@@ -2,8 +2,8 @@ id: platform/download
 
 title:
   user: "Скачать установочный файл 1С"
-  business: "Загрузка дистрибутива платформы с портала ИТС"
-  machine: "Скачивание архива дистрибутива версии {{version}} с users.v8.1c.ru в {{dest}}"
+  business: "Загрузка дистрибутива платформы версии {{version}} с портала releases.1c.ru"
+  machine: "HTTP-загрузка через API интернет-поддержки или вручную; результат — архив в {{dest}}"
 
 applies_to:
   platforms: [windows, linux, macos]
@@ -22,6 +22,15 @@ parameters:
       Редакция дистрибутива: client — полный клиент + конфигуратор,
       thin_client — только тонкий клиент, server — серверные компоненты.
 
+  - name: creds-ref
+    type: creds-ref
+    required: false
+    description: >
+      Ссылка на учётные данные портала releases.1c.ru (логин/пароль ИТС).
+      Если не передан — шаг переходит в режим ручного ожидания: выводит инструкцию
+      и ждёт появления файла в dest.
+      Получить через credentials/prompt-credentials или credentials/read-from-keyring.
+
   - name: dest
     type: path
     required: false
@@ -33,12 +42,12 @@ returns:
     description: "Полный путь к скачанному файлу архива дистрибутива"
 
 preconditions:
-  - id: portal-reachable
-    description: "Портал users.v8.1c.ru доступен"
+  - id: releases-reachable
+    description: "releases.1c.ru доступен"
     check:
-      windows: 'powershell -NoProfile -Command "(Invoke-WebRequest -Uri https://users.v8.1c.ru -UseBasicParsing -TimeoutSec 10).StatusCode"'
-      linux:   'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://users.v8.1c.ru'
-      macos:   'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://users.v8.1c.ru'
+      windows: 'powershell -NoProfile -Command "(Invoke-WebRequest -Uri https://releases.1c.ru -UseBasicParsing -TimeoutSec 10).StatusCode"'
+      linux:   'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://releases.1c.ru'
+      macos:   'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://releases.1c.ru'
     expected: "200"
 
   - id: dest-writable
@@ -50,49 +59,110 @@ preconditions:
     expected: "True"
 
 action:
-  description: "Скачать дистрибутив {{edition}} версии {{version}} с users.v8.1c.ru"
-  # Скачивание требует авторизации на портале ИТС.
-  # Инструкция: перейти на https://releases.1c.ru/project/Platform85,
-  # найти версию {{version}}, скачать пакет {{edition}} для своей ОС вручную.
-  # Автоматизированная загрузка без credentials невозможна (инвариант 7).
+  description: >
+    Если creds-ref передан — скачать через API интернет-поддержки.
+    Иначе — вывести инструкцию и ждать появления файла.
+  # Два режима в одном action. Генератор скриптов выбирает ветку по наличию creds-ref.
+  # API интернет-поддержки: https://releases.1c.ru/total — JSON-каталог версий и прямые URL.
+  # Авторизация: Basic Auth (логин:пароль ИТС) или cookie-сессия через /login.
   windows: >
     powershell -NoProfile -Command "
       $dest = if ('{{dest}}') { '{{dest}}' } else { $env:TEMP }
-      Write-Host 'Ожидается файл дистрибутива в: ' + $dest
-      Write-Host 'Скачайте вручную с https://releases.1c.ru/project/Platform85'
-      Write-Host 'Файл: 1cv8_{{version}}_windows_x86_64.exe (или .zip)'"
+      $version = '{{version}}'
+      $edition = '{{edition}}'
+      $credsRef = '{{creds-ref}}'
+
+      if ($credsRef) {
+        # Режим автоматической загрузки через API интернет-поддержки
+        $creds = Resolve-CredsRef $credsRef   # резолвится из keyring/prompt, не из YAML
+        $apiBase = 'https://releases.1c.ru'
+        $catalogUrl = \"$apiBase/version_file?nick=Platform85&ver=$version\"
+        $resp = Invoke-RestMethod -Uri $catalogUrl -Credential $creds -UseBasicParsing
+        $fileUrl = $resp | Where-Object { $_.name -match $edition } | Select-Object -First 1 -ExpandProperty href
+        Invoke-WebRequest -Uri \"$apiBase$fileUrl\" -Credential $creds -OutFile \"$dest\\1cv8_${version}_windows_x86_64.exe\"
+        Write-Host \"Скачано: $dest\\1cv8_${version}_windows_x86_64.exe\"
+      } else {
+        # Режим ручного ожидания
+        Write-Host 'creds-ref не передан. Скачайте вручную:'
+        Write-Host \"  https://releases.1c.ru/project/Platform85  →  версия $version  →  $edition\"
+        Write-Host \"  Сохраните файл в: $dest\"
+        Write-Host 'После скачивания нажмите Enter для продолжения...'
+        Read-Host | Out-Null
+      }"
   linux: >
     dest="${{dest:-/tmp}}"
-    echo "Ожидается файл дистрибутива в: $dest"
-    echo "Скачайте вручную с https://releases.1c.ru/project/Platform85"
-    echo "Файл: 1cv8_{{version}}_deb64.tar.gz"
+    version="{{version}}"
+    edition="{{edition}}"
+    creds_ref="{{creds-ref}}"
+
+    if [ -n "$creds_ref" ]; then
+      # Режим автоматической загрузки через API интернет-поддержки
+      login=$(resolve-creds-ref "$creds_ref" login)
+      password=$(resolve-creds-ref "$creds_ref" password)
+      catalog_url="https://releases.1c.ru/version_file?nick=Platform85&ver=$version"
+      file_href=$(curl -s -u "$login:$password" "$catalog_url" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+match = next((f['href'] for f in data if '$edition' in f.get('name','').lower()), None)
+print(match or '')
+")
+      [ -z "$file_href" ] && { echo "Файл $edition не найден в каталоге версии $version" >&2; exit 1; }
+      curl -L -u "$login:$password" "https://releases.1c.ru$file_href" -o "$dest/1cv8_${version}_deb64.tar.gz"
+    else
+      echo "creds-ref не передан. Скачайте вручную:"
+      echo "  https://releases.1c.ru/project/Platform85  →  версия $version  →  $edition"
+      echo "  Сохраните файл в: $dest"
+      echo "После скачивания нажмите Enter..."
+      read -r
+    fi
   macos: >
     dest="${{dest:-/tmp}}"
-    echo "Ожидается файл дистрибутива в: $dest"
-    echo "Скачайте вручную с https://releases.1c.ru/project/Platform85"
-    echo "Файл: 1cv8_{{version}}_mac.tar.gz"
+    version="{{version}}"
+    edition="{{edition}}"
+    creds_ref="{{creds-ref}}"
+
+    if [ -n "$creds_ref" ]; then
+      login=$(resolve-creds-ref "$creds_ref" login)
+      password=$(resolve-creds-ref "$creds_ref" password)
+      catalog_url="https://releases.1c.ru/version_file?nick=Platform85&ver=$version"
+      file_href=$(curl -s -u "$login:$password" "$catalog_url" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+match = next((f['href'] for f in data if '$edition' in f.get('name','').lower()), None)
+print(match or '')
+")
+      [ -z "$file_href" ] && { echo "Файл $edition не найден в каталоге версии $version" >&2; exit 1; }
+      curl -L -u "$login:$password" "https://releases.1c.ru$file_href" -o "$dest/1cv8_${version}_mac.tar.gz"
+    else
+      echo "creds-ref не передан. Скачайте вручную:"
+      echo "  https://releases.1c.ru/project/Platform85  →  версия $version  →  $edition"
+      echo "  Сохраните файл в: $dest"
+      echo "После скачивания нажмите Enter..."
+      read -r
+    fi
 
 postconditions:
   - id: archive-exists
     description: "Файл дистрибутива существует в папке назначения"
     check:
-      windows: >
-        powershell -NoProfile -Command
-        "@(Get-ChildItem '{{dest | default: $env:TEMP}}' -Filter '1cv8_{{version}}*').Count -gt 0"
-      linux:   'ls {{dest | default: /tmp}}/1cv8_{{version}}* 2>/dev/null | wc -l | grep -qv "^0$" && echo True'
-      macos:   'ls {{dest | default: /tmp}}/1cv8_{{version}}* 2>/dev/null | wc -l | grep -qv "^0$" && echo True'
+      windows: 'powershell -NoProfile -Command "@(Get-ChildItem ''{{dest | default: $env:TEMP}}'' -Filter ''1cv8_{{version}}*'').Count -gt 0"'
+      linux:   'ls {{dest | default: /tmp}}/1cv8_{{version}}* 2>/dev/null | grep -c . | grep -qv "^0$" && echo True'
+      macos:   'ls {{dest | default: /tmp}}/1cv8_{{version}}* 2>/dev/null | grep -c . | grep -qv "^0$" && echo True'
     expected: "True"
 
 didactic_notes:
   why: >
-    Все официальные дистрибутивы 1С распространяются через портал ИТС (users.v8.1c.ru)
-    и требуют действующего партнёрского договора или подписки на ИТС.
-    Именно поэтому скачивание нельзя полностью автоматизировать — нужна авторизация.
+    Шаг параметрический: version определяет что скачивать, creds-ref — как.
+    Без creds-ref шаг остаётся полезным — выводит инструкцию и ждёт файл,
+    не прерывая выполнение пути. С creds-ref — полностью автоматический.
+    Так же работает API интернет-поддержки в типовых конфигурациях 1С
+    при автообновлении платформы.
   common_mistakes:
-    - "Скачивание с неофициальных зеркал и торрент-ресурсов — дистрибутив может быть модифицирован"
-    - "Путаница между client и server: для учёбы нужен client (содержит Конфигуратор), не server"
-    - "Скачать архив без распаковки и попытаться установить архив напрямую"
+    - "Скачивание с неофициальных зеркал — дистрибутив может быть модифицирован (инвариант 7)"
+    - "Передать creds напрямую строкой в YAML — пароль попадёт в git-историю; только через creds-ref"
+    - "Путаница edition: client содержит Конфигуратор, thin_client — нет"
   pitfalls: >
-    Если подписка ИТС истекла, портал покажет страницу продления вместо файла.
-    На некоторых корпоративных прокси HTTPS до releases.1c.ru блокируется —
-    нужен обход или загрузка с другой машины.
+    Если подписка ИТС истекла — API вернёт 403, не файл.
+    На корпоративных прокси HTTPS до releases.1c.ru бывает заблокирован.
+    Структура JSON-каталога API интернет-поддержки может измениться при обновлении портала —
+    при поломке сверяться с актуальной документацией releases.1c.ru.

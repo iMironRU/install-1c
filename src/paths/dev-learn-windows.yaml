@@ -1,0 +1,62 @@
+scenario: dev-learn
+platform: windows
+
+# Целевое состояние: запускается Конфигуратор, открывается демонстрационная ИБ,
+# доступно редактирование объектов метаданных.
+#
+# Локальные переменные: installer, platform-bin, base-path
+
+steps:
+
+  - call: prerequisites/check-admin
+    call_notes:
+      why: >
+        Установщик 1С записывает в Program Files и реестр.
+        Без прав администратора msiexec упадёт с кодом 1603 без внятного сообщения.
+
+  - call: platform/download
+    args:
+      version: "8.5.25.1234"     # TODO: заменить на актуальный билд при публикации
+      edition: client
+      dest: '%TEMP%\1c_distrib'
+    bind:
+      installer: archive-path
+    call_notes:
+      why: >
+        Для разработчика нужна редакция client: содержит тонкий клиент и Конфигуратор.
+        Редакция server здесь избыточна — серверные службы на учебной машине не нужны.
+
+  - call: platform/install
+    args:
+      source: "{{installer}}"
+      components: [ClientThin, Configurator]
+      version: "8.5.25.1234"
+    bind:
+      platform-bin: bin-dir
+    call_notes:
+      why: >
+        Устанавливаем только два компонента из пяти. ClientThin — для запуска баз.
+        Configurator — для редактирования конфигурации. Server, ConfigStorage — лишние.
+
+  - call: ib/create-file
+    args:
+      ib-path: '%USERPROFILE%\Documents\1C\Bases\Obuchenie'
+      name: "Обучение"
+      locale: ru_RU
+    bind:
+      base-path: ib-path
+    call_notes:
+      why: >
+        Файловая ИБ в домашней папке пользователя — нет прав администратора,
+        нет зависимости от сети. Для одного разработчика это оптимально.
+
+  - call: ib/load-config
+    args:
+      ib-path: "{{base-path}}"
+      config-source: "{{platform-bin}}\\tmplts\\1c\\Demo\\1cv8.cf"
+      update-db: true
+    call_notes:
+      why: >
+        Демонстрационная конфигурация поставляется вместе с платформой в папке tmplts.
+        Загружаем её, чтобы сразу иметь готовые объекты метаданных для изучения —
+        справочники, документы, регистры — не создавая их с нуля.

@@ -1,0 +1,98 @@
+id: platform/download
+
+title:
+  user: "Скачать установочный файл 1С"
+  business: "Загрузка дистрибутива платформы с портала ИТС"
+  machine: "Скачивание архива дистрибутива версии {{version}} с users.v8.1c.ru в {{dest}}"
+
+applies_to:
+  platforms: [windows, linux, macos]
+
+parameters:
+  - name: version
+    type: string
+    required: true
+    description: "Версия платформы в формате MAJOR.MINOR.PATCH.BUILD, например 8.5.25.1234"
+
+  - name: edition
+    type: enum
+    values: [client, server, thin_client]
+    default: client
+    description: >
+      Редакция дистрибутива: client — полный клиент + конфигуратор,
+      thin_client — только тонкий клиент, server — серверные компоненты.
+
+  - name: dest
+    type: path
+    required: false
+    description: "Папка для сохранения архива. По умолчанию: системная папка TEMP."
+
+returns:
+  - name: archive-path
+    type: path
+    description: "Полный путь к скачанному файлу архива дистрибутива"
+
+preconditions:
+  - id: portal-reachable
+    description: "Портал users.v8.1c.ru доступен"
+    check:
+      windows: 'powershell -NoProfile -Command "(Invoke-WebRequest -Uri https://users.v8.1c.ru -UseBasicParsing -TimeoutSec 10).StatusCode"'
+      linux:   'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://users.v8.1c.ru'
+      macos:   'curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://users.v8.1c.ru'
+    expected: "200"
+
+  - id: dest-writable
+    description: "Папка назначения существует и доступна для записи"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path -PathType Container ''{{dest | default: $env:TEMP}}''"'
+      linux:   'test -d "{{dest | default: /tmp}}" && test -w "{{dest | default: /tmp}}" && echo True'
+      macos:   'test -d "{{dest | default: /tmp}}" && test -w "{{dest | default: /tmp}}" && echo True'
+    expected: "True"
+
+action:
+  description: "Скачать дистрибутив {{edition}} версии {{version}} с users.v8.1c.ru"
+  # Скачивание требует авторизации на портале ИТС.
+  # Инструкция: перейти на https://releases.1c.ru/project/Platform85,
+  # найти версию {{version}}, скачать пакет {{edition}} для своей ОС вручную.
+  # Автоматизированная загрузка без credentials невозможна (инвариант 7).
+  windows: >
+    powershell -NoProfile -Command "
+      $dest = if ('{{dest}}') { '{{dest}}' } else { $env:TEMP }
+      Write-Host 'Ожидается файл дистрибутива в: ' + $dest
+      Write-Host 'Скачайте вручную с https://releases.1c.ru/project/Platform85'
+      Write-Host 'Файл: 1cv8_{{version}}_windows_x86_64.exe (или .zip)'"
+  linux: >
+    dest="${{dest:-/tmp}}"
+    echo "Ожидается файл дистрибутива в: $dest"
+    echo "Скачайте вручную с https://releases.1c.ru/project/Platform85"
+    echo "Файл: 1cv8_{{version}}_deb64.tar.gz"
+  macos: >
+    dest="${{dest:-/tmp}}"
+    echo "Ожидается файл дистрибутива в: $dest"
+    echo "Скачайте вручную с https://releases.1c.ru/project/Platform85"
+    echo "Файл: 1cv8_{{version}}_mac.tar.gz"
+
+postconditions:
+  - id: archive-exists
+    description: "Файл дистрибутива существует в папке назначения"
+    check:
+      windows: >
+        powershell -NoProfile -Command
+        "@(Get-ChildItem '{{dest | default: $env:TEMP}}' -Filter '1cv8_{{version}}*').Count -gt 0"
+      linux:   'ls {{dest | default: /tmp}}/1cv8_{{version}}* 2>/dev/null | wc -l | grep -qv "^0$" && echo True'
+      macos:   'ls {{dest | default: /tmp}}/1cv8_{{version}}* 2>/dev/null | wc -l | grep -qv "^0$" && echo True'
+    expected: "True"
+
+didactic_notes:
+  why: >
+    Все официальные дистрибутивы 1С распространяются через портал ИТС (users.v8.1c.ru)
+    и требуют действующего партнёрского договора или подписки на ИТС.
+    Именно поэтому скачивание нельзя полностью автоматизировать — нужна авторизация.
+  common_mistakes:
+    - "Скачивание с неофициальных зеркал и торрент-ресурсов — дистрибутив может быть модифицирован"
+    - "Путаница между client и server: для учёбы нужен client (содержит Конфигуратор), не server"
+    - "Скачать архив без распаковки и попытаться установить архив напрямую"
+  pitfalls: >
+    Если подписка ИТС истекла, портал покажет страницу продления вместо файла.
+    На некоторых корпоративных прокси HTTPS до releases.1c.ru блокируется —
+    нужен обход или загрузка с другой машины.

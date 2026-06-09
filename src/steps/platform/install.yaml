@@ -1,0 +1,122 @@
+id: platform/install
+
+title:
+  user: "Установить 1С:Предприятие на компьютер"
+  business: "Установка компонентов платформы 1С:Предприятие {{version}}"
+  machine: "Тихая установка MSI/DEB/PKG с компонентами {{components | join ,}} из {{source}}"
+
+applies_to:
+  platforms: [windows, linux, macos]
+
+parameters:
+  - name: source
+    type: path
+    required: true
+    description: "Путь к файлу дистрибутива (.exe/.zip для Windows, .tar.gz для Linux/macOS)"
+
+  - name: components
+    type: list<enum>
+    values: [ClientThin, ClientThick, Server, ConfigStorage, Configurator]
+    default: [ClientThin]
+    description: >
+      Устанавливаемые компоненты. ClientThin — тонкий клиент (обязателен).
+      Configurator — конфигуратор (нужен разработчику). Server — только для серверных сценариев.
+
+  - name: version
+    type: string
+    required: false
+    description: "Версия платформы — используется для проверки постусловия. Если не задана, проверяется любая 8.5.x."
+
+returns:
+  - name: bin-dir
+    type: path
+    description: "Папка с исполняемыми файлами платформы"
+
+preconditions:
+  - id: source-exists
+    description: "Файл дистрибутива доступен"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path ''{{source}}''"'
+      linux:   'test -f "{{source}}" && echo True'
+      macos:   'test -f "{{source}}" && echo True'
+    expected: "True"
+
+  - id: disk-space
+    description: "Достаточно места на диске (минимум 3 ГБ)"
+    check:
+      windows: >
+        powershell -NoProfile -Command
+        "(Get-PSDrive C).Free -gt 3GB"
+      linux:   'df / | awk ''NR==2 {print ($4 > 3145728) ? "True" : "False"}'''
+      macos:   'df / | awk ''NR==2 {print ($4 > 3145728) ? "True" : "False"}'''
+    expected: "True"
+
+action:
+  description: "Тихая установка компонентов {{components | join ,}} из {{source}}"
+  windows: >
+    powershell -NoProfile -Command "
+      $src = '{{source}}'
+      # Если передан архив (.zip или самораспаковывающийся .exe) — распаковать
+      if ($src -match '\.zip$') {
+        $unpackDir = Join-Path $env:TEMP '1cv8_unpack'
+        Expand-Archive -Path $src -DestinationPath $unpackDir -Force
+        $msi = Get-ChildItem $unpackDir -Filter '1cv8*.msi' | Select-Object -First 1
+      } else {
+        # Self-extracting exe: запускаем с /SILENT для распаковки во TEMP
+        & $src /SILENT /NORESTART /D=$env:TEMP\1cv8_unpack | Out-Null
+        $msi = Get-ChildItem $env:TEMP\1cv8_unpack -Filter '1cv8*.msi' | Select-Object -First 1
+      }
+      if (-not $msi) { Write-Error 'MSI не найден после распаковки'; exit 1 }
+      $addlocal = '{{components | join ,}}'
+      Start-Process msiexec.exe -ArgumentList \"/i `\"$($msi.FullName)`\" ADDLOCAL=$addlocal /qn /norestart\" -Wait -PassThru | Out-Null"
+  linux: >
+    src="{{source}}"
+    tmpdir=$(mktemp -d)
+    tar -xzf "$src" -C "$tmpdir"
+    for pkg in "$tmpdir"/*.deb; do dpkg -i "$pkg"; done
+    rm -rf "$tmpdir"
+  macos: >
+    src="{{source}}"
+    tmpdir=$(mktemp -d)
+    tar -xzf "$src" -C "$tmpdir"
+    for pkg in "$tmpdir"/*.pkg; do installer -pkg "$pkg" -target /; done
+    rm -rf "$tmpdir"
+
+postconditions:
+  - id: client-binary
+    description: "Исполняемый файл тонкого клиента установлен"
+    check:
+      windows: >
+        powershell -NoProfile -Command
+        "@(Get-ChildItem 'C:\Program Files\1cv8\{{version | default: 8.5}}*\bin\1cv8c.exe' -ErrorAction SilentlyContinue).Count -gt 0"
+      linux:   'ls /opt/1cv8/x86_64/{{version | default: 8.5}}*/1cv8c 2>/dev/null | grep -c . | grep -qv "^0$" && echo True'
+      macos:   'ls /Applications/1cv8.app/Contents/MacOS/1cv8c 2>/dev/null && echo True'
+    expected: "True"
+
+  - id: configurator-binary
+    description: "Конфигуратор установлен (только если запрошен)"
+    # Применяется только если Configurator в components.
+    # CI-генератор должен пропускать эту проверку если Configurator не в args.
+    when: "Configurator in {{components}}"
+    check:
+      windows: >
+        powershell -NoProfile -Command
+        "@(Get-ChildItem 'C:\Program Files\1cv8\{{version | default: 8.5}}*\bin\1cv8.exe' -ErrorAction SilentlyContinue).Count -gt 0"
+      linux:   'ls /opt/1cv8/x86_64/{{version | default: 8.5}}*/1cv8 2>/dev/null | grep -c . | grep -qv "^0$" && echo True'
+      macos:   'ls /Applications/1cv8.app/Contents/MacOS/1cv8 2>/dev/null && echo True'
+    expected: "True"
+
+didactic_notes:
+  why: >
+    Компонентная установка — чтобы не ставить лишнего. Серверные компоненты
+    на учебной машине занимают место и создают фоновые службы без нужды.
+    Разработчику нужны ClientThin (запуск баз) и Configurator (редактирование метаданных).
+  common_mistakes:
+    - "Запуск установщика двойным кликом вместо тихой установки — получаем интерактивный wizard, который не логируется"
+    - "Установка Server на рабочую станцию разработчика — не нужен, создаёт службу агента сервера"
+    - "Забыть распаковать архив: попытка передать .zip напрямую в msiexec"
+  pitfalls: >
+    Антивирус (особенно Kaspersky Endpoint Security) может заблокировать msiexec
+    или пометить компоненты платформы как потенциально опасные.
+    Добавить папку установщика в исключения до запуска, убрать после.
+    UAC на Windows может не запросить подтверждение если msiexec уже запущен от администратора.

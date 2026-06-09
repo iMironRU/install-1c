@@ -1,0 +1,34 @@
+# Шаблон пути — путь как список вызовов функций.
+#
+# Путь — это интеграционный тест сценария на конкретной ОС.
+# Каждый call — вызов атомарного шага из src/steps/<namespace>/<id>.yaml.
+#
+# args:  входные параметры вызова (должны покрывать required-параметры шага)
+# bind:  { local-var: return-name } — привязка возврата шага к локальной переменной пути
+# call_notes.why — "зачем именно здесь, с этими аргументами" (дидактика вызова)
+#
+# Локальные переменные подставляются в args следующих шагов как {{var-name}}.
+# Если bind не задан — возвращаемое значение доступно как {{<step-id>.<return-name>}}.
+
+scenario: scenario-id           # ссылка на src/scenarios.yaml
+platform: windows               # windows | linux | macos
+
+steps:
+  - call: namespace/step-id
+    # Шаг без параметров и без bind — просто вызов.
+
+  - call: namespace/step-with-args
+    args:
+      param-name: "literal-value"
+      optional-param: [OptionA, OptionB]
+    bind:
+      local-var: return-name    # теперь {{local-var}} доступен в следующих шагах
+    call_notes:
+      why: >
+        Зачем этот вызов в данном сценарии с данными аргументами.
+        Отличается от didactic_notes.why в определении шага:
+        там — общее "зачем шаг существует", здесь — "зачем именно так в этом контексте".
+
+  - call: namespace/next-step
+    args:
+      input: "{{local-var}}"    # использование результата предыдущего шага

@@ -1,0 +1,94 @@
+id: ib/create-file
+
+title:
+  user: "Создать новую базу данных 1С"
+  business: "Создание файловой информационной базы"
+  machine: "Создание пустой файловой ИБ командой CREATEINFOBASE File={{ib-path}}"
+
+applies_to:
+  platforms: [windows, linux, macos]
+
+parameters:
+  - name: ib-path
+    type: path
+    required: true
+    description: "Путь к папке новой файловой ИБ. Папка будет создана если не существует."
+
+  - name: name
+    type: string
+    required: true
+    description: "Отображаемое имя ИБ в списке 1С (для добавления в ibases.v8i)"
+
+  - name: locale
+    type: enum
+    values: [ru_RU, en_US]
+    default: ru_RU
+    description: "Локаль базы данных. Влияет на сортировку и форматирование."
+
+returns:
+  - name: ib-path
+    type: path
+    description: "Путь к созданной файловой ИБ (совпадает с параметром ib-path)"
+  - name: ibases-entry
+    type: string
+    description: "Строка для добавления в ibases.v8i — подключение ИБ к списку"
+
+preconditions:
+  - id: platform-installed
+    description: "Платформа 1С установлена и 1cv8c доступен"
+    check:
+      windows: >
+        powershell -NoProfile -Command
+        "@(Get-ChildItem 'C:\Program Files\1cv8\8.5*\bin\1cv8c.exe' -ErrorAction SilentlyContinue).Count -gt 0"
+      linux:   'ls /opt/1cv8/x86_64/8.5*/1cv8c 2>/dev/null | grep -c . | grep -qv "^0$" && echo True'
+      macos:   'ls /Applications/1cv8.app/Contents/MacOS/1cv8c 2>/dev/null && echo True'
+    expected: "True"
+
+  - id: dest-parent-writable
+    description: "Родительская папка доступна для записи"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path -IsValid ''{{ib-path}}''"'
+      linux:   'test -w "$(dirname ''{{ib-path}}'')" && echo True'
+      macos:   'test -w "$(dirname ''{{ib-path}}'')" && echo True'
+    expected: "True"
+
+action:
+  description: "Создать файловую ИБ в {{ib-path}}"
+  windows: >
+    powershell -NoProfile -Command "
+      $ibPath = '{{ib-path}}'
+      New-Item -ItemType Directory -Force -Path $ibPath | Out-Null
+      $bin = (Get-ChildItem 'C:\Program Files\1cv8\8.5*\bin\1cv8c.exe' | Sort-Object -Descending | Select-Object -First 1).FullName
+      & $bin CREATEINFOBASE ""File=$ibPath;Locale={{locale}}"" /Out $env:TEMP\1c_create_ib.log
+      if ($LASTEXITCODE -ne 0) { Get-Content $env:TEMP\1c_create_ib.log; exit 1 }"
+  linux: >
+    mkdir -p "{{ib-path}}"
+    bin=$(ls /opt/1cv8/x86_64/8.5*/1cv8c | sort -rV | head -1)
+    "$bin" CREATEINFOBASE "File={{ib-path}};Locale={{locale}}" /Out /tmp/1c_create_ib.log
+    [ $? -eq 0 ] || { cat /tmp/1c_create_ib.log; exit 1; }
+  macos: >
+    mkdir -p "{{ib-path}}"
+    "/Applications/1cv8.app/Contents/MacOS/1cv8c" CREATEINFOBASE "File={{ib-path}};Locale={{locale}}" /Out /tmp/1c_create_ib.log
+    [ $? -eq 0 ] || { cat /tmp/1c_create_ib.log; exit 1; }
+
+postconditions:
+  - id: ib-marker-exists
+    description: "В папке ИБ создан файл 1Cv8.1CD (маркер файловой ИБ)"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path ''{{ib-path}}\1Cv8.1CD''"'
+      linux:   'test -f "{{ib-path}}/1Cv8.1CD" && echo True'
+      macos:   'test -f "{{ib-path}}/1Cv8.1CD" && echo True'
+    expected: "True"
+
+didactic_notes:
+  why: >
+    Файловая ИБ — это просто папка с файлом 1Cv8.1CD. Никакого сервера, никакой СУБД.
+    Идеальный вариант для обучения: просто скопировать папку — готовый бэкап.
+  common_mistakes:
+    - "Указать путь с кириллицей на старых версиях Windows — платформа может не принять"
+    - "Создать ИБ через GUI и потерять её путь — команда CREATEINFOBASE оставляет лог"
+    - "Путать папку ИБ с файлом конфигурации (.cf) — это разные вещи"
+  pitfalls: >
+    На сетевых дисках (UNC-пути \\server\share\...) файловая ИБ работает,
+    но производительность при многопользовательской работе падает.
+    Для офисного сценария с >3 пользователями лучше сразу серверная установка.

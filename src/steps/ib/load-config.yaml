@@ -1,0 +1,96 @@
+id: ib/load-config
+
+title:
+  user: "Загрузить конфигурацию в базу данных"
+  business: "Загрузка и применение конфигурации из .cf-файла или папки шаблонов"
+  machine: "1cv8c DESIGNER /F {{ib-path}} /LoadCfg {{config-source}} /UpdateDBCfg"
+
+applies_to:
+  platforms: [windows, linux, macos]
+
+parameters:
+  - name: ib-path
+    type: path
+    required: true
+    description: "Путь к файловой ИБ (папка с 1Cv8.1CD)"
+
+  - name: config-source
+    type: path
+    required: true
+    description: "Путь к .cf-файлу конфигурации или к папке шаблона из tmplts"
+
+  - name: update-db
+    type: bool
+    default: true
+    description: "Применить конфигурацию к базе данных после загрузки (/UpdateDBCfg)"
+
+preconditions:
+  - id: ib-exists
+    description: "Информационная база существует"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path ''{{ib-path}}\1Cv8.1CD''"'
+      linux:   'test -f "{{ib-path}}/1Cv8.1CD" && echo True'
+      macos:   'test -f "{{ib-path}}/1Cv8.1CD" && echo True'
+    expected: "True"
+
+  - id: config-source-exists
+    description: "Файл или папка конфигурации доступны"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path ''{{config-source}}''"'
+      linux:   'test -e "{{config-source}}" && echo True'
+      macos:   'test -e "{{config-source}}" && echo True'
+    expected: "True"
+
+action:
+  description: "Загрузить конфигурацию из {{config-source}} в ИБ {{ib-path}}"
+  windows: >
+    powershell -NoProfile -Command "
+      $bin = (Get-ChildItem 'C:\Program Files\1cv8\8.5*\bin\1cv8c.exe' | Sort-Object -Descending | Select-Object -First 1).FullName
+      $args = @('DESIGNER', '/F', '{{ib-path}}', '/LoadCfg', '{{config-source}}', '/Out', '$env:TEMP\1c_loadcfg.log', '/DisableStartupMessages')
+      if ('{{update-db}}' -eq 'true') { $args += '/UpdateDBCfg' }
+      & $bin @args
+      if ($LASTEXITCODE -ne 0) { Get-Content $env:TEMP\1c_loadcfg.log; exit 1 }"
+  linux: >
+    bin=$(ls /opt/1cv8/x86_64/8.5*/1cv8c | sort -rV | head -1)
+    update_flag=""
+    [ "{{update-db}}" = "true" ] && update_flag="/UpdateDBCfg"
+    "$bin" DESIGNER /F "{{ib-path}}" /LoadCfg "{{config-source}}" /Out /tmp/1c_loadcfg.log /DisableStartupMessages $update_flag
+    [ $? -eq 0 ] || { cat /tmp/1c_loadcfg.log; exit 1; }
+  macos: >
+    bin="/Applications/1cv8.app/Contents/MacOS/1cv8c"
+    update_flag=""
+    [ "{{update-db}}" = "true" ] && update_flag="/UpdateDBCfg"
+    "$bin" DESIGNER /F "{{ib-path}}" /LoadCfg "{{config-source}}" /Out /tmp/1c_loadcfg.log /DisableStartupMessages $update_flag
+    [ $? -eq 0 ] || { cat /tmp/1c_loadcfg.log; exit 1; }
+
+postconditions:
+  - id: config-loaded
+    description: "В ИБ появилась конфигурация (файл конфигурации .cf в папке ИБ после применения)"
+    # Признак применённой конфигурации — наличие 1cv8.cf в папке ИБ
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path ''{{ib-path}}\1cv8.cf''"'
+      linux:   'test -f "{{ib-path}}/1cv8.cf" && echo True'
+      macos:   'test -f "{{ib-path}}/1cv8.cf" && echo True'
+    expected: "True"
+
+  - id: no-errors-in-log
+    description: "Лог загрузки не содержит строк с ошибками"
+    check:
+      windows: 'powershell -NoProfile -Command "if (Select-String -Path $env:TEMP\1c_loadcfg.log -Pattern ''ОШИБКА|Error'' -Quiet) { ''False'' } else { ''True'' }"'
+      linux:   'grep -qiE "ОШИБКА|Error" /tmp/1c_loadcfg.log && echo False || echo True'
+      macos:   'grep -qiE "ОШИБКА|Error" /tmp/1c_loadcfg.log && echo False || echo True'
+    expected: "True"
+
+didactic_notes:
+  why: >
+    Пустая ИБ — это чистый лист без объектов метаданных. Чтобы сразу изучать
+    готовую конфигурацию (справочники, документы, отчёты), нужно загрузить .cf-файл.
+    /UpdateDBCfg применяет конфигурацию к структуре таблиц базы данных.
+  common_mistakes:
+    - "Загрузить .cf без /UpdateDBCfg — конфигурация загружена, но база не перестроена, клиент откажется работать"
+    - "Перепутать .cf (конфигурация) и .dt (выгрузка базы с данными) — это разные форматы"
+    - "Запустить загрузку пока ИБ открыта в другом сеансе — получим блокировку"
+  pitfalls: >
+    Загрузка большой конфигурации (БСП, Бухгалтерия) с /UpdateDBCfg занимает
+    5–15 минут. В этот момент 1cv8c не даёт вывода — нормально, процесс идёт.
+    Прерывать нельзя, иначе база окажется в несогласованном состоянии.

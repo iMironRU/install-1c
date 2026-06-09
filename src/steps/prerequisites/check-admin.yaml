@@ -1,0 +1,56 @@
+id: prerequisites/check-admin
+
+title:
+  user: "Убедиться, что есть права на установку программ"
+  business: "Проверка прав администратора перед установкой"
+  machine: "Проверка членства текущего процесса в группе Administrators (Windows) или UID=0 / sudo без пароля (Linux/macOS)"
+
+applies_to:
+  platforms: [windows, linux, macos]
+
+# Шаг без параметров и без returns — только проверка.
+
+preconditions: []
+
+action:
+  description: "Проверить права администратора"
+  windows: >
+    powershell -NoProfile -Command
+    "if (-not ([Security.Principal.WindowsPrincipal]
+      [Security.Principal.WindowsIdentity]::GetCurrent()
+    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+      Write-Error 'Требуются права администратора. Запустите терминал от имени администратора.'; exit 1
+    }"
+  linux: >
+    if [ "$(id -u)" != "0" ]; then
+      sudo -n true 2>/dev/null || { echo "Требуются права sudo. Запустите: sudo -i" >&2; exit 1; }
+    fi
+  macos: >
+    if [ "$(id -u)" != "0" ]; then
+      sudo -n true 2>/dev/null || { echo "Требуются права sudo. Запустите: sudo -i" >&2; exit 1; }
+    fi
+
+postconditions:
+  - id: admin-confirmed
+    description: "Текущий сеанс имеет права администратора"
+    check:
+      windows: >
+        powershell -NoProfile -Command
+        "([Security.Principal.WindowsPrincipal]
+          [Security.Principal.WindowsIdentity]::GetCurrent()
+        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"
+      linux:  'test "$(id -u)" = "0" && echo True || (sudo -n true 2>/dev/null && echo True)'
+      macos:  'test "$(id -u)" = "0" && echo True || (sudo -n true 2>/dev/null && echo True)'
+    expected: "True"
+
+didactic_notes:
+  why: >
+    Установщики 1С записывают файлы в Program Files, создают записи в реестре
+    и регистрируют COM-объекты — всё это требует прав администратора.
+    Запуск без прав даёт невнятные ошибки в середине установки.
+  common_mistakes:
+    - "Двойной клик по setup.exe из проводника без 'Запустить от имени администратора'"
+    - "Терминал открыт без повышения, UAC не показывает запрос"
+  pitfalls: >
+    На корпоративных машинах права администратора могут быть ограничены GPO.
+    В этом случае нужна помощь IT-отдела — самостоятельно обойти политику нельзя.

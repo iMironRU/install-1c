@@ -1,0 +1,87 @@
+# Шаблон атомарного шага — шаг как функция.
+#
+# Инварианты (см. konspekt.md):
+#   4 — pre / action / post обязательны, постусловие исполняемо.
+#   5 — три языка в title.
+#   6 — лицензирование не смешивается.
+#   8 — шаг — функция с явной сигнатурой; переиспользование через вызов, не копирование.
+#
+# Именование: src/steps/<namespace>/<id>.yaml
+# Namespace-ы: prerequisites/, platform/, db/, ib/, publish/, license/
+#
+# Параметры подставляются как {{param-name}} в action и postconditions.
+# Параметры с default не обязательны в вызове из пути.
+# Параметр появляется только когда реально вызывается с разными значениями.
+
+id: namespace/step-id           # уникален в пределах репо; совпадает с путём файла
+
+title:
+  user: "Что человек видит как этот шаг"
+  business: "Что происходит в терминах задачи и роли"
+  machine: "Что именно делает машина с какими параметрами"
+
+# ── Сигнатура ────────────────────────────────────────────────────────────────
+
+parameters:
+  - name: param-name
+    type: path                  # path | string | enum | list<enum> | bool
+    required: true
+    description: "Что задаёт этот параметр"
+
+  - name: optional-param
+    type: list<enum>
+    values: [OptionA, OptionB, OptionC]
+    default: [OptionA]
+    description: "Параметр с дефолтом — в вызове можно не указывать"
+
+returns:
+  - name: result-name
+    type: path                  # то, что следующие шаги могут потребить через bind
+    description: "Что возвращает шаг"
+
+# ── Применимость ─────────────────────────────────────────────────────────────
+
+applies_to:
+  platforms: [windows, linux, macos]
+  # platform_version: "8.5"    # необязательно; ветка под 8.3 — через отдельные секции action
+
+# ── Тело ─────────────────────────────────────────────────────────────────────
+
+preconditions:
+  - id: example-precondition
+    description: "Что должно быть истинно до начала"
+    check:
+      windows: 'powershell -NoProfile -Command "..."'
+      linux:   'test -x /path/to/something && echo True'
+      macos:   'test -x /path/to/something && echo True'
+    expected: "True"
+
+action:
+  description: "Краткое описание — для логов и сайта"
+  windows: "<команда с {{param-name}} и {{optional-param | join ,}}>"
+  linux:   "<команда>"
+  macos:   "<команда>"
+
+postconditions:
+  - id: example-postcondition
+    description: "Проверка результата — исполняемая команда"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path ''{{result-name}}''"'
+      linux:   'test -e {{result-name}} && echo True'
+      macos:   'test -e {{result-name}} && echo True'
+    expected: "True"
+
+# ── Дидактика определения ────────────────────────────────────────────────────
+# Общее "зачем этот шаг существует" — не привязано к конкретному сценарию.
+# Контекст вызова ("зачем здесь, с этими аргументами") — в call_notes пути.
+
+didactic_notes:
+  why: >
+    Зачем этот шаг нужен в принципе — одно-два предложения.
+    Не повторение action, а причина существования шага.
+  common_mistakes:
+    - "Типичная ошибка 1"
+    - "Типичная ошибка 2"
+  pitfalls: >
+    На что обратить внимание. Альтернативные сборки упоминаются здесь
+    как «здесь не идём — почему» (инвариант 7).

@@ -1,0 +1,48 @@
+# Матрица: сценарий × ОС → путь установки.
+#
+# Статусы:
+#   planned       — заявлен, не разработан
+#   drafted       — описан в src/paths/, не собирается
+#   scripted      — собирается в скрипт, не оттестирован
+#   tested        — прошёл tests/technical/
+#   published     — прошёл и технический, и дидактический тесты
+#   out-of-scope  — невозможно или не имеет смысла (требуется reason)
+#
+# CI проверяет, что каждому сценарию из scenarios.yaml
+# соответствует запись в этой матрице.
+
+matrix:
+
+  dev-learn:
+    windows: { status: planned, path: src/paths/dev-learn-windows.yaml }
+    linux:   { status: planned, path: src/paths/dev-learn-linux.yaml }
+    macos:   { status: planned, path: src/paths/dev-learn-macos.yaml }
+
+  thin-client-user:
+    windows: { status: planned, path: src/paths/thin-client-user-windows.yaml }
+    linux:   { status: planned, path: src/paths/thin-client-user-linux.yaml }
+    macos:   { status: planned, path: src/paths/thin-client-user-macos.yaml }
+
+  office-file:
+    windows: { status: planned, path: src/paths/office-file-windows.yaml }
+    linux:   { status: planned, path: src/paths/office-file-linux.yaml }
+    macos:
+      status: out-of-scope
+      reason: >
+        Файловая ИБ на сетевой шаре с macOS в роли файлового сервера —
+        нестандартный сценарий. Клиент на macOS поддерживается
+        через сценарий thin-client-user.
+
+  office-server:
+    windows: { status: planned, path: src/paths/office-server-windows.yaml }
+    linux:   { status: planned, path: src/paths/office-server-linux.yaml }
+    macos:
+      status: out-of-scope
+      reason: >
+        Сервер 1С:Предприятие на macOS официально не поддерживается.
+        Клиентская часть к серверу — через сценарий thin-client-user.
+
+  cloud-fresh:
+    windows: { status: planned, path: src/paths/cloud-fresh-windows.yaml }
+    linux:   { status: planned, path: src/paths/cloud-fresh-linux.yaml }
+    macos:   { status: planned, path: src/paths/cloud-fresh-macos.yaml }

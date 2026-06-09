@@ -1,0 +1,70 @@
+# Шаблон атомарного шага установки.
+#
+# Принципы (см. konspekt.md):
+#   - У каждого шага есть pre / action / post (инвариант 4).
+#   - Постусловие исполняемо (команда + ожидаемый результат).
+#   - Имя на трёх языках (инвариант 5).
+#   - Лицензирование не смешивается с техническими шагами (инвариант 6).
+#
+# Файлы шагов именуются: <id>.yaml. id уникален в пределах репо.
+
+id: example-step-id
+
+title:
+  user: "Что человек видит как этот шаг"
+  business: "Что происходит в терминах задачи и роли"
+  machine: "Что именно делает машина"
+
+applies_to:
+  platforms: [windows, linux, macos]
+  scenarios: [dev-learn]
+  # platform_version: "8.5"   # необязательно; ветка под старшую/младшую
+
+preconditions:
+  - id: admin-rights
+    description: "Требуются права администратора"
+    check:
+      windows: >
+        powershell -NoProfile -Command
+        "([Security.Principal.WindowsPrincipal]
+          [Security.Principal.WindowsIdentity]::GetCurrent()
+        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"
+      linux: 'test "$(id -u)" = "0" && echo True || (sudo -n true 2>/dev/null && echo True)'
+      macos: 'test "$(id -u)" = "0" && echo True || (sudo -n true 2>/dev/null && echo True)'
+    expected: "True"
+
+  - id: distribution-present
+    description: "Дистрибутив должен быть скачан и доступен"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path $env:TEMP\\1cv8.msi"'
+      linux: 'test -f /tmp/1cv8.deb && echo True'
+      macos: 'test -f /tmp/1cv8.pkg && echo True'
+    expected: "True"
+
+action:
+  description: "Краткое описание действия — для логов и сайта"
+  windows: "<команда или последовательность команд>"
+  linux: "<команда или последовательность команд>"
+  macos: "<команда или последовательность команд>"
+
+postconditions:
+  - id: binary-installed
+    description: "Бинарь платформы установлен и доступен"
+    check:
+      windows: 'powershell -NoProfile -Command "Test-Path ''C:\\Program Files\\1cv8\\8.5*\\bin\\1cv8c.exe''"'
+      linux: 'test -x /opt/1cv8/x86_64/8.5*/1cv8c && echo True'
+      macos: 'test -x /Applications/1cv8.app/Contents/MacOS/1cv8c && echo True'
+    expected: "True"
+
+didactic_notes:
+  # Дидактический слой — для текста инструкции, не для скрипта.
+  # Эти поля попадают на сайт, но не выполняются.
+  why: >
+    Зачем этот шаг нужен — одно-два предложения объяснения причины,
+    а не повторения действия.
+  common_mistakes:
+    - "Запуск установщика без прав администратора"
+    - "Скачивание дистрибутива с неофициального источника"
+  pitfalls: >
+    На что обратить внимание: антивирус, политики безопасности,
+    блокировки MSI и аналогичное.
